@@ -1,0 +1,64 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  loadbalancing:
+    protocol:
+      otlp: null
+      kafka:
+        brokers:
+          - kafka:9092
+        producer:
+          compression: none
+          max_message_bytes: 1000000
+          required_acks: 1
+#        auth:
+#          tls:
+#            insecure: true
+#            insecure_skip_verify: true
+        metadata:
+          full: true
+          retry:
+            max: 3
+            backoff: 250ms
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+        timeout: 5s
+        encoding: otlp_proto
+        protocol_version: 2.0.0
+    resolver:
+      kafka:
+        brokers:
+          - kafka:9092
+        metadata:
+          full: true
+        protocol_version: 2.0.0
+        timeout: 5s
+        topic_prefix: otel-pod-
+
+extensions:
+  health_check:
+  pprof:
+  zpages:
+
+service:
+  extensions: [pprof, zpages, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [loadbalancing]
+  telemetry:
+    metrics:
+      address: ":8888"
+      level: "Detailed"

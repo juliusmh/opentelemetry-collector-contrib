@@ -7,13 +7,10 @@ package loadbalancingexporter // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
-
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/loadbalancingexporter/internal/metadata"
 	"go.opencensus.io/stats/view"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/exporter"
-	"go.opentelemetry.io/collector/exporter/otlpexporter"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/loadbalancingexporter/internal/metadata"
 )
 
 // NewFactory creates a factory for the exporter.
@@ -30,12 +27,12 @@ func NewFactory() exporter.Factory {
 }
 
 func createDefaultConfig() component.Config {
-	otlpFactory := otlpexporter.NewFactory()
-	otlpDefaultCfg := otlpFactory.CreateDefaultConfig().(*otlpexporter.Config)
+	//otlpFactory := otlpexporter.NewFactory()
+	//otlpDefaultCfg := otlpFactory.CreateDefaultConfig().(*otlpexporter.Config)
 
 	return &Config{
 		Protocol: Protocol{
-			OTLP: *otlpDefaultCfg,
+			//OTLP: otlpDefaultCfg,
 		},
 	}
 }

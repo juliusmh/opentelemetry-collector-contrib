@@ -5,8 +5,12 @@ package loadbalancingexporter // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/IBM/sarama"
+	"log"
+	"os"
 	"sync"
 	"time"
 
@@ -19,6 +23,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/multierr"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 )
 
@@ -37,11 +42,13 @@ type traceExporterImp struct {
 
 // Create new traces exporter
 func newTracesExporter(params exporter.CreateSettings, cfg component.Config) (*traceExporterImp, error) {
-	exporterFactory := otlpexporter.NewFactory()
+	exporterFactory := buildFactory(cfg.(*Config))
+
+	sarama.Logger = log.New(os.Stdout, "[sarama] ", log.LstdFlags)
 
 	lb, err := newLoadBalancer(params, cfg, func(ctx context.Context, endpoint string) (component.Component, error) {
 		oCfg := buildExporterConfig(cfg.(*Config), endpoint)
-		return exporterFactory.CreateTracesExporter(ctx, params, &oCfg)
+		return exporterFactory.CreateTracesExporter(ctx, params, oCfg)
 	})
 	if err != nil {
 		return nil, err
@@ -59,10 +66,33 @@ func newTracesExporter(params exporter.CreateSettings, cfg component.Config) (*t
 	return &traceExporter, nil
 }
 
-func buildExporterConfig(cfg *Config, endpoint string) otlpexporter.Config {
-	oCfg := cfg.Protocol.OTLP
-	oCfg.Endpoint = endpoint
-	return oCfg
+func buildFactory(cfg *Config) exporter.Factory {
+	if cfg.Protocol.OTLP != nil {
+		fmt.Println("using otlp factory")
+		return otlpexporter.NewFactory()
+	}
+	if cfg.Protocol.Kafka != nil {
+		fmt.Println("using kafka factory")
+		return kafkaexporter.NewFactory()
+	}
+	return nil
+}
+
+func buildExporterConfig(cfg *Config, endpoint string) component.Config {
+	if cfg.Protocol.OTLP != nil {
+		fmt.Println("using otlp exporter")
+		oCfg := cfg.Protocol.OTLP
+		oCfg.Endpoint = endpoint
+		return oCfg
+	}
+	if cfg.Protocol.Kafka != nil {
+		fmt.Println("using kafka exporter", "topic:", endpoint)
+		kCfg := cfg.Protocol.Kafka
+		kCfg.Topic = endpoint
+		json.NewEncoder(os.Stdout).Encode(kCfg)
+		return kCfg
+	}
+	return nil
 }
 
 func (e *traceExporterImp) Capabilities() consumer.Capabilities {

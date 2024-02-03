@@ -1,0 +1,108 @@
+version: "3"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "9997:9997"
+      - "19092:19092"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "unset" , "JMX_PORT" ,";" ,"kafka-topics.sh","--zookeeper","zookeeper:2181","--list" ]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_INTERNAL://kafka:19092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8080:8080
+    expose:
+      - 8080
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      KAFKA_CLUSTERS_0_METRICS_PORT: 9997
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: 'true'
+
+  lb:
+    image: otelcontribcol:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-lb.yaml:/etc/otel-collector-config.yaml
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888"
+    expose:
+      - "4317:4317"
+      - "4318:4318"
+
+  receiver-1:
+    image: otelcontribcol:latest
+    command: [ "--config=/etc/otel-collector-config.yaml" ]
+    ports:
+      - "8888"
+    volumes:
+      - ./otel-receiver-1.yaml:/etc/otel-collector-config.yaml
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  receiver-2:
+    image: otelcontribcol:latest
+    command: [ "--config=/etc/otel-collector-config.yaml" ]
+    ports:
+      - "8888"
+    volumes:
+      - ./otel-receiver-2.yaml:/etc/otel-collector-config.yaml
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - "./prometheus.yaml:/etc/prometheus/prometheus.yml"
+    ports:
+      - 9090:9090
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - 3000:3000
+    expose:
+      - 3000:3000
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafana
+    volumes:
+      - ./grafana.yaml:/etc/grafana/provisioning/datasources/datasource.yaml

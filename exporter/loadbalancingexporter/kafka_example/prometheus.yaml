@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 10s
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+          - lb:8888
+          - receiver-1:8888
+          - receiver-2:8888

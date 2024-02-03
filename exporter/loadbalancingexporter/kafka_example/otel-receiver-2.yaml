@@ -1,0 +1,30 @@
+receivers:
+  kafka:
+    brokers:
+      - kafka:9092
+    metadata:
+      full: true
+    protocol_version: 2.0.0
+    topic: otel-pod-2
+    create_topic: true
+    encoding: otlp_proto
+processors:
+  batch:
+exporters:
+  debug:
+    verbosity: detailed
+extensions:
+  health_check:
+  pprof:
+  zpages:
+service:
+  extensions: [pprof, zpages, health_check]
+  pipelines:
+    traces:
+      receivers: [kafka]
+      processors: [batch]
+      exporters: [debug]
+  telemetry:
+    metrics:
+      address: ":8888"
+      level: "Detailed"

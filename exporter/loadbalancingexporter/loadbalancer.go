@@ -40,6 +40,7 @@ type loadBalancerImp struct {
 
 	res  resolver
 	ring *hashRing
+	cfg  *Config
 
 	componentFactory componentFactory
 	exporters        map[string]component.Component
@@ -85,6 +86,14 @@ func newLoadBalancer(params exporter.CreateSettings, cfg component.Config, facto
 			return nil, err
 		}
 	}
+	if oCfg.Resolver.Kafka != nil {
+		k8sLogger := params.Logger.With(zap.String("resolver", "kafka"))
+		var err error
+		res, err = newKafkaResolver(k8sLogger, oCfg.Resolver.Kafka, oCfg.Resolver.Kafka.TopicPrefix)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if res == nil {
 		return nil, errNoResolver
@@ -95,6 +104,7 @@ func newLoadBalancer(params exporter.CreateSettings, cfg component.Config, facto
 		res:              res,
 		componentFactory: factory,
 		exporters:        map[string]component.Component{},
+		cfg:              oCfg,
 	}, nil
 }
 
@@ -124,7 +134,8 @@ func (lb *loadBalancerImp) onBackendChanges(resolved []string) {
 
 func (lb *loadBalancerImp) addMissingExporters(ctx context.Context, endpoints []string) {
 	for _, endpoint := range endpoints {
-		endpoint = endpointWithPort(endpoint)
+
+		endpoint = lb.endpointWithPort(endpoint)
 
 		if _, exists := lb.exporters[endpoint]; !exists {
 			exp, err := lb.componentFactory(ctx, endpoint)
@@ -142,7 +153,11 @@ func (lb *loadBalancerImp) addMissingExporters(ctx context.Context, endpoints []
 	}
 }
 
-func endpointWithPort(endpoint string) string {
+func (lb *loadBalancerImp) endpointWithPort(endpoint string) string {
+	// Only add port if otlp protocol:
+	if lb.cfg.Protocol.OTLP == nil {
+		return endpoint
+	}
 	if !strings.Contains(endpoint, ":") {
 		endpoint = fmt.Sprintf("%s:%s", endpoint, defaultPort)
 	}
@@ -152,7 +167,7 @@ func endpointWithPort(endpoint string) string {
 func (lb *loadBalancerImp) removeExtraExporters(ctx context.Context, endpoints []string) {
 	endpointsWithPort := make([]string, len(endpoints))
 	for i, e := range endpoints {
-		endpointsWithPort[i] = endpointWithPort(e)
+		endpointsWithPort[i] = lb.endpointWithPort(e)
 	}
 	for existing := range lb.exporters {
 		if !endpointFound(existing, endpointsWithPort) {
@@ -189,7 +204,7 @@ func (lb *loadBalancerImp) Exporter(endpoint string) (component.Component, error
 	// data loss because the latest batches sent to outdated backend will never find their way out.
 	// for details: https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/1690
 	lb.updateLock.RLock()
-	exp, found := lb.exporters[endpointWithPort(endpoint)]
+	exp, found := lb.exporters[lb.endpointWithPort(endpoint)]
 	lb.updateLock.RUnlock()
 	if !found {
 		// something is really wrong... how come we couldn't find the exporter??

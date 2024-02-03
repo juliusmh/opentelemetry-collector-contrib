@@ -5,6 +5,7 @@ package kafkareceiver // import "github.com/open-telemetry/opentelemetry-collect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -31,6 +32,7 @@ var errInvalidInitialOffset = fmt.Errorf("invalid initial offset")
 type kafkaTracesConsumer struct {
 	config            Config
 	consumerGroup     sarama.ConsumerGroup
+	admin             sarama.ClusterAdmin
 	nextConsumer      consumer.Traces
 	topics            []string
 	cancelConsumeLoop context.CancelFunc
@@ -126,6 +128,28 @@ func createKafkaClient(config Config) (sarama.ConsumerGroup, error) {
 	return sarama.NewConsumerGroup(config.Brokers, config.GroupID, saramaConfig)
 }
 
+func createKafkaAdminClient(config Config) (sarama.ClusterAdmin, error) {
+	saramaConfig := sarama.NewConfig()
+	saramaConfig.ClientID = config.ClientID
+	saramaConfig.Metadata.Full = config.Metadata.Full
+	saramaConfig.Metadata.Retry.Max = config.Metadata.Retry.Max
+	saramaConfig.Metadata.Retry.Backoff = config.Metadata.Retry.Backoff
+
+	if config.ResolveCanonicalBootstrapServersOnly {
+		saramaConfig.Net.ResolveCanonicalBootstrapServers = true
+	}
+	if config.ProtocolVersion != "" {
+		var err error
+		if saramaConfig.Version, err = sarama.ParseKafkaVersion(config.ProtocolVersion); err != nil {
+			return nil, err
+		}
+	}
+	if err := kafka.ConfigureAuthentication(config.Authentication, saramaConfig); err != nil {
+		return nil, err
+	}
+	return sarama.NewClusterAdmin(config.Brokers, saramaConfig)
+}
+
 func (c *kafkaTracesConsumer) Start(_ context.Context, _ component.Host) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.cancelConsumeLoop = cancel
@@ -141,6 +165,24 @@ func (c *kafkaTracesConsumer) Start(_ context.Context, _ component.Host) error {
 	if c.consumerGroup == nil {
 		if c.consumerGroup, err = createKafkaClient(c.config); err != nil {
 			return err
+		}
+	}
+	if c.admin == nil && c.config.CreateTopic {
+		if c.admin, err = createKafkaAdminClient(c.config); err != nil {
+			return err
+		}
+		for _, topic := range c.topics {
+			err = c.admin.CreateTopic(topic, &sarama.TopicDetail{
+				NumPartitions:     1,
+				ReplicationFactor: 1,
+				ReplicaAssignment: nil,
+				ConfigEntries:     nil,
+			}, false)
+			if errors.Is(err, sarama.ErrTopicAlreadyExists) {
+				c.settings.Logger.Warn("topic already exists")
+			} else if err != nil {
+				return err
+			}
 		}
 	}
 	consumerGroup := &tracesConsumerGroupHandler{
@@ -185,6 +227,12 @@ func (c *kafkaTracesConsumer) consumeLoop(ctx context.Context, handler sarama.Co
 }
 
 func (c *kafkaTracesConsumer) Shutdown(context.Context) error {
+	if c.admin == nil && c.config.CreateTopic {
+		for _, topic := range c.topics {
+			err := c.admin.DeleteTopic(topic)
+			c.settings.Logger.Error("failed to delete topic", zap.Error(err))
+		}
+	}
 	if c.cancelConsumeLoop == nil {
 		return nil
 	}
